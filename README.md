@@ -8,6 +8,26 @@ The results below are outputs of this specified model. They are not measured ado
 
 - [`utah_top10_industry_nodes.csv`](utah_top10_industry_nodes.csv) — five Utah industry nodes, representative employers, DWS industry categories and employment ranges, and resistance values.
 - [`utah_industry_connections.csv`](utah_industry_connections.csv) — the two modeled ties, README strengths and coefficients, and Utah evidence for the relationships.
+- [`twenty_industries_over_time.py`](twenty_industries_over_time.py) — solves every year from CSV inputs. By default it runs the original 20-industry example; `--utah` selects the five-industry Utah model.
+- [`utah_industries_results.csv`](utah_industries_results.csv) — generated yearly states and minimum energies for the five Utah industries, grouping ten representative employers.
+- [`twenty_industry_nodes.csv`](twenty_industry_nodes.csv) and [`twenty_industry_connections.csv`](twenty_industry_connections.csv) — the original challenge's 20 suggested industries and 24 ties, recovered from the original example.
+- [`twenty_industries_results.csv`](twenty_industries_results.csv) — generated results for the original 20-industry example.
+- [`twenty_industries_summary.txt`](twenty_industries_summary.txt) — the terminal's yearly table and first digital year for each industry, saved as plain text.
+
+Run the Utah classical baseline described below from this folder:
+
+```bash
+python -m pip install -r requirements.txt
+python twenty_industries_over_time.py --utah
+```
+
+To run the original 20-industry example instead:
+
+```bash
+python twenty_industries_over_time.py
+```
+
+The terminal shows the number of industries that are digital each year. The script finds its input CSVs relative to its own location. Each model writes its own results CSV and text summary, so running one does not overwrite the other's results.
 
 ## Data and modeling choices
 

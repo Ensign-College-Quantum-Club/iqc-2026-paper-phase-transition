@@ -1,12 +1,14 @@
-"""Find flip years for the README's 20 industries in one example region.
+"""Find flip years using industry and connection CSV files.
 
 This classical solver checks every arrangement using NumPy. It is intended
 for this small learning example; enumeration grows exponentially with nodes.
-The inputs are the README's suggestions, with no regional shift or noise.
+The number of industries and their resistances and ties come from the CSVs.
 
 Run with: python twenty_industries_over_time.py
+For the five-industry Utah model, add: --utah
 """
 
+import argparse
 import csv
 from pathlib import Path
 from time import perf_counter
@@ -14,64 +16,54 @@ from time import perf_counter
 import numpy as np
 
 
-# Each industry now has its own resistance, rather than a separate variable.
-resistances = {
-    "Technology": 0.10,
-    "Media": 0.20,
-    "Telecom": 0.25,
-    "Retail": 0.30,
-    "Hospitality": 0.35,
-    "Logistics": 0.40,
-    "Banking": 0.45,
-    "Accounting": 0.50,
-    "Manufacturing": 0.50,
-    "Insurance": 0.55,
-    "Energy": 0.55,
-    "Pharma": 0.60,
-    "Education": 0.60,
-    "Nonprofit": 0.65,
-    "Real Estate": 0.65,
-    "Construction": 0.70,
-    "Agriculture": 0.70,
-    "Healthcare": 0.75,
-    "Government": 0.85,
-    "Legal": 0.90,
-}
-
-# These are the raw connection strengths from the README.
-partner_strengths = [
-    ("Healthcare", "Insurance", 1.0),
-    ("Manufacturing", "Logistics", 0.9),
-    ("Banking", "Real Estate", 0.8),
-    ("Retail", "Logistics", 0.8),
-    ("Construction", "Real Estate", 0.8),
-    ("Healthcare", "Pharma", 0.7),
-    ("Legal", "Real Estate", 0.7),
-    ("Healthcare", "Government", 0.6),
-    ("Legal", "Government", 0.6),
-    ("Accounting", "Banking", 0.6),
-    ("Government", "Education", 0.6),
-    ("Agriculture", "Logistics", 0.6),
-    ("Telecom", "Technology", 0.6),
-    ("Insurance", "Banking", 0.5),
-    ("Legal", "Banking", 0.5),
-    ("Energy", "Manufacturing", 0.5),
-    ("Technology", "Media", 0.5),
-    ("Insurance", "Legal", 0.4),
-    ("Accounting", "Nonprofit", 0.4),
-    ("Construction", "Government", 0.4),
-    ("Hospitality", "Retail", 0.4),
-    ("Pharma", "Logistics", 0.4),
-    ("Nonprofit", "Education", 0.4),
-    ("Media", "Retail", 0.3),
-]
-
-tie_scale = 0.15
-ties = [(first, second, tie_scale * strength)
-        for first, second, strength in partner_strengths]
+data_directory = Path(__file__).resolve().parent
+nodes_path = data_directory / "twenty_industry_nodes.csv"
+connections_path = data_directory / "twenty_industry_connections.csv"
 start_year = 2026
 end_year = 2040
 pressure_per_year = 0.07
+
+
+def load_network(nodes_path, connections_path):
+    """Read resistances and match connection endpoints using CSV node IDs."""
+    resistances = {}
+    industry_by_id = {}
+    regions = set()
+    with nodes_path.open(newline="", encoding="utf-8-sig") as source:
+        for row in csv.DictReader(source):
+            node_id = row["Node_ID"].strip()
+            industry = row["Model_Industry"].strip()
+            resistance = float(row["Resistance_r"])
+            if not node_id or not industry:
+                raise ValueError("Each node needs a Node_ID and Model_Industry.")
+            if node_id in industry_by_id or industry in resistances:
+                raise ValueError(f"Duplicate node ID or industry: {node_id}, {industry}")
+            if not 0 <= resistance <= 1:
+                raise ValueError(f"Resistance must be between 0 and 1: {industry}")
+            industry_by_id[node_id] = industry
+            resistances[industry] = resistance
+            regions.add(row["Region"].strip())
+    if not resistances:
+        raise ValueError("The industry CSV has no nodes.")
+
+    ties = []
+    seen_edges = set()
+    with connections_path.open(newline="", encoding="utf-8-sig") as source:
+        for row in csv.DictReader(source):
+            first_id = row["From_Node"].strip()
+            second_id = row["To_Node"].strip()
+            if first_id not in industry_by_id or second_id not in industry_by_id:
+                raise ValueError(f"Connection references an unknown node: {first_id}, {second_id}")
+            edge = frozenset((first_id, second_id))
+            if first_id == second_id or edge in seen_edges:
+                raise ValueError(f"Self-connection or duplicate tie: {first_id}, {second_id}")
+            # This column already contains J = 0.15 * raw strength.
+            strength = float(row["README_J_Coefficient"])
+            if not np.isfinite(strength) or strength < 0:
+                raise ValueError("Tie coefficients must be finite and nonnegative.")
+            ties.append((industry_by_id[first_id], industry_by_id[second_id], strength))
+            seen_edges.add(edge)
+    return resistances, ties, ", ".join(sorted(regions))
 
 
 def prepare_arrangements(resistances, ties):
@@ -88,7 +80,7 @@ def prepare_arrangements(resistances, ties):
 
     # E = -sum(J*s_i*s_j) + sum(r_i*s_i) - pressure*sum(s_i).
     # Only the final term changes each year, so reuse the other terms.
-    fixed_energy = states @ np.array(list(resistances.values()))
+    fixed_energy = states @ np.array(list(resistances.values()), dtype=float)
     for first, second, strength in ties:
         fixed_energy -= strength * states[:, indices[first]] * states[:, indices[second]]
     spin_totals = states.sum(axis=1, dtype=np.int32)
@@ -112,16 +104,30 @@ def solve_year(pressure, states, fixed_energy, spin_totals):
 
 
 def main():
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--utah", action="store_true",
+                        help="Run the five-industry Utah model instead of the original 20 industries.")
+    arguments = parser.parse_args()
+    selected_nodes = data_directory / "utah_top10_industry_nodes.csv" if arguments.utah else nodes_path
+    selected_connections = data_directory / "utah_industry_connections.csv" if arguments.utah else connections_path
+
     started = perf_counter()
+    resistances, ties, region = load_network(selected_nodes, selected_connections)
     industries, states, fixed_energy, spin_totals = prepare_arrangements(resistances, ties)
     flip_years = {industry: None for industry in industries}
     rows = []
     found_tie = False
+    summary_lines = []
 
-    print(f"One example region: {len(industries)} industries, {len(ties)} partner ties.")
+    def print_summary(line=""):
+        """Keep the saved table identical to the table printed in the terminal."""
+        print(line)
+        summary_lines.append(line)
+
+    print(f"{region}: {len(industries)} industries, {len(ties)} partner ties.")
     print(f"Method: classical exhaustive search over {len(states):,} arrangements.")
-    print("Inputs: suggested README values, without regional shifts or noise.\n")
-    print(f"{'Year':<6} {'Pressure':>8} {'Digital':>8}  Newly digital")
+    print(f"Inputs: {selected_nodes.name} and {selected_connections.name}.\n")
+    print_summary(f"{'Year':<6} {'Pressure':>8} {'Digital':>8}  Newly digital")
 
     for year in range(start_year, end_year + 1):
         pressure = pressure_per_year * (year - start_year)
@@ -136,24 +142,32 @@ def main():
                          "industry": industry, "state": label,
                          "lowest_energy": round(lowest_energy, 10)})
 
-        print(f"{year:<6} {pressure:>8.2f} {labels.count('Digital'):>8}  "
-              f"{', '.join(newly_digital) or '-'}")
+        digital_count = labels.count("Digital")
+        print_summary(f"{year:<6} {pressure:>8.2f} {digital_count:>8}  "
+                      f"{', '.join(newly_digital) or '-'}")
 
     elapsed = perf_counter() - started
-    print("\nFirst definite digital year:")
+    print_summary()
+    print_summary("First definite digital year:")
     for industry, year in sorted(flip_years.items(), key=lambda item: (item[1] or 9999, item[0])):
-        print(f"{industry:<16} {year if year is not None else 'Not reached'}")
+        print_summary(f"{industry:<16} {year if year is not None else 'Not reached'}")
     if found_tie:
-        print("Either means equally good arrangements disagree on that industry.")
-        print("Flip years require all lowest-energy arrangements to agree on digital.")
+        print_summary("Either means equally good arrangements disagree on that industry.")
+        print_summary("Flip years require all lowest-energy arrangements to agree on digital.")
     print(f"\nPreparation and yearly solving: {elapsed:.3f} seconds (includes console output).")
 
-    output_path = Path(__file__).with_name("twenty_industries_results.csv")
+    results_filename = "utah_industries_results.csv" if arguments.utah else "twenty_industries_results.csv"
+    output_path = data_directory / results_filename
     with output_path.open("w", newline="", encoding="utf-8") as output:
         writer = csv.DictWriter(output, fieldnames=list(rows[0]), lineterminator="\n")
         writer.writeheader()
         writer.writerows(rows)
     print(f"Yearly states saved to: {output_path}")
+
+    summary_filename = "utah_industries_summary.txt" if arguments.utah else "twenty_industries_summary.txt"
+    summary_path = data_directory / summary_filename
+    summary_path.write_text("\n".join(summary_lines) + "\n", encoding="utf-8", newline="\n")
+    print(f"Yearly table and flip years saved to: {summary_path}")
 
 
 if __name__ == "__main__":

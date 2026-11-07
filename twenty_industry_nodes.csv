@@ -1,0 +1,21 @@
+Node_ID,Region,Model_Industry,Resistance_r
+TECHNOLOGY,Example region,Technology,0.1
+MEDIA,Example region,Media,0.2
+TELECOM,Example region,Telecom,0.25
+RETAIL,Example region,Retail,0.3
+HOSPITALITY,Example region,Hospitality,0.35
+LOGISTICS,Example region,Logistics,0.4
+BANKING,Example region,Banking,0.45
+ACCOUNTING,Example region,Accounting,0.5
+MANUFACTURING,Example region,Manufacturing,0.5
+INSURANCE,Example region,Insurance,0.55
+ENERGY,Example region,Energy,0.55
+PHARMA,Example region,Pharma,0.6
+EDUCATION,Example region,Education,0.6
+NONPROFIT,Example region,Nonprofit,0.65
+REAL_ESTATE,Example region,Real Estate,0.65
+CONSTRUCTION,Example region,Construction,0.7
+AGRICULTURE,Example region,Agriculture,0.7
+HEALTHCARE,Example region,Healthcare,0.75
+GOVERNMENT,Example region,Government,0.85
+LEGAL,Example region,Legal,0.9
