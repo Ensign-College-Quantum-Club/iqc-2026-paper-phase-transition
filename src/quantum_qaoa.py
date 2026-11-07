@@ -11,44 +11,70 @@ Same model and sign convention as the challenge README:
 Usage
   Local simulator (free, start here):
       python src/quantum_qaoa.py
+      python src/quantum_qaoa.py --network twenty --layers 50
       python src/quantum_qaoa.py --network us1 --layers 50
 
   qBraid real hardware (spends credits; see --help):
       python src/quantum_qaoa.py --list-devices
       python src/quantum_qaoa.py --device <device id> --layers 3 --shots 500
 
-Networks: utah (5 nodes, default), us1 (20 nodes, one US region).
-Writes results/quantum_results_<network>_<backend>.csv
+Networks: twenty (our 20-industry CSVs), utah (5 CSV nodes, default),
+us1 (20 nodes with regional shifts and random noise).
+Writes per-network CSV results, a text report, and JSON run metadata.
 """
 
 import argparse
 import csv
+import json
 from pathlib import Path
 from time import perf_counter, sleep
 
 from qiskit import QuantumCircuit
+from qiskit.quantum_info import SparsePauliOp
 
 import scaling_comparison as model
+import twenty_industries_over_time as classical
 
 RESULTS = Path(__file__).resolve().parents[1] / "results"
 
 
 def get_network(name):
+    if name == "twenty":
+        resistances, ties, _ = classical.load_network(classical.nodes_path,
+                                                     classical.connections_path)
+        return resistances, ties
     if name == "utah":
-        return model.utah_network()
+        resistances, ties, _ = classical.load_network(
+            classical.data_directory / "utah_top10_industry_nodes.csv",
+            classical.data_directory / "utah_industry_connections.csv")
+        return resistances, ties
     if name == "us1":
         return model.us_network(1)
-    raise SystemExit(f"unknown network {name!r} (use utah or us1)")
+    raise SystemExit(f"unknown network {name!r} (use twenty, utah or us1)")
+
+
+def ising_coefficients(resistances, ties, pressure):
+    """H = -sum(J Z_i Z_j) - sum((A-r_i) Z_i), with 0=digital, 1=paper."""
+    nodes = list(resistances)
+    index = {node: i for i, node in enumerate(nodes)}
+    fields = [-(pressure - resistances[node]) for node in nodes]
+    couplings = [(index[a], index[b], -strength) for a, b, strength in ties]
+    return nodes, fields, couplings
+
+
+def build_cost_hamiltonian(resistances, ties, pressure):
+    """Represent the business energy explicitly as a quantum Z/ZZ operator."""
+    nodes, fields, couplings = ising_coefficients(resistances, ties, pressure)
+    terms = [("Z", [i], field) for i, field in enumerate(fields)]
+    terms += [("ZZ", [i, j], value) for i, j, value in couplings]
+    return SparsePauliOp.from_sparse_list(terms, num_qubits=len(nodes)), nodes
 
 
 def build_circuit(resistances, ties, pressure, layers, ramp):
     """Linear-ramp QAOA: cost angle rises 0 -> ramp, mixer angle falls ramp -> 0."""
-    nodes = list(resistances)
-    index = {node: i for i, node in enumerate(nodes)}
-    h = {node: -(pressure - r) for node, r in resistances.items()}
-    J = [(index[a], index[b], -strength) for a, b, strength in ties]
+    nodes, fields, couplings = ising_coefficients(resistances, ties, pressure)
     # Normalise so the largest coefficient is 1; hardware precision is relative.
-    scale = max([abs(v) for v in h.values()] + [abs(j) for _, _, j in J] + [1e-9])
+    scale = max([abs(v) for v in fields] + [abs(j) for _, _, j in couplings] + [1e-9])
 
     width = len(nodes)
     qc = QuantumCircuit(width, width)
@@ -57,9 +83,9 @@ def build_circuit(resistances, ties, pressure, layers, ramp):
         fraction = step / layers
         gamma = ramp * fraction / scale
         beta = ramp * (1 - fraction)
-        for node, value in h.items():
-            qc.rz(2 * gamma * value, index[node])
-        for i, j, value in J:
+        for i, value in enumerate(fields):
+            qc.rz(2 * gamma * value, i)
+        for i, j, value in couplings:
             # RZZ written as CNOT-RZ-CNOT so every hardware backend can run it.
             qc.cx(i, j)
             qc.rz(2 * gamma * value, j)
@@ -84,6 +110,25 @@ def to_state(bits, nodes, qubit0_on_right):
     return {node: (1 if ordered[i] == "0" else -1) for i, node in enumerate(nodes)}
 
 
+def analyze_counts(counts, nodes, resistances, ties, pressure,
+                   qubit0_on_right, exact_energy):
+    """Select the lowest-energy observed sample; the reference only scores hits."""
+    total = sum(counts.values())
+    if total <= 0:
+        raise ValueError("The sampler returned no measurements.")
+    hits, best, best_energy = 0, None, None
+    for bits, count in counts.items():
+        if count <= 0:
+            continue
+        state = to_state(bits, nodes, qubit0_on_right)
+        energy = model.energy(state, resistances, ties, pressure)
+        if energy <= exact_energy + 1e-9:
+            hits += count
+        if best_energy is None or energy < best_energy:
+            best, best_energy = state, energy
+    return best, best_energy, hits, total
+
+
 def counts_from(result):
     """Read counts from a Qiskit or qBraid result object."""
     for getter in (lambda r: r.data.get_counts(), lambda r: r.get_counts(),
@@ -99,15 +144,18 @@ def counts_from(result):
 class LocalBackend:
     name = "aer_simulator"
 
-    def __init__(self):
+    def __init__(self, seed=1):
         from qiskit import transpile
         from qiskit_aer import AerSimulator
-        self.sim = AerSimulator(method="statevector")
+        self.seed = seed
+        self.sim = AerSimulator(method="statevector", max_parallel_threads=4,
+                                max_parallel_experiments=1)
         self.transpile = transpile
 
     def run(self, circuits, shots):
-        jobs = self.sim.run(self.transpile(circuits, self.sim), shots=shots,
-                            seed_simulator=1)
+        compiled = self.transpile(circuits, self.sim, seed_transpiler=self.seed,
+                                  num_processes=1)
+        jobs = self.sim.run(compiled, shots=shots, seed_simulator=self.seed)
         result = jobs.result()
         return [result.get_counts(i) for i in range(len(circuits))]
 
@@ -164,13 +212,15 @@ def main():
     RESULTS.mkdir(exist_ok=True)
     parser = argparse.ArgumentParser(description=__doc__,
                                      formatter_class=argparse.RawDescriptionHelpFormatter)
-    parser.add_argument("--network", default="utah", help="utah (5 nodes) or us1 (20 nodes)")
+    parser.add_argument("--network", default="utah", choices=("twenty", "utah", "us1"),
+                        help="twenty: our CSV model; utah: 5 CSV nodes; us1: regional/noisy model")
     parser.add_argument("--device", help="qBraid device id; omit for the local simulator")
     parser.add_argument("--list-devices", action="store_true", help="list qBraid devices")
     parser.add_argument("--layers", type=int, default=None,
                         help="ramp steps (default 30 on the simulator, 3 on hardware)")
     parser.add_argument("--ramp", type=float, default=1.0, help="total ramp angle")
     parser.add_argument("--shots", type=int, default=1000)
+    parser.add_argument("--seed", type=int, default=1, help="reproducible local simulation seed")
     parser.add_argument("--years", default="2026-2040", help="e.g. 2030-2038 to save credits")
     args = parser.parse_args()
 
@@ -178,21 +228,48 @@ def main():
         list_devices()
         return
 
+    layers = args.layers if args.layers is not None else (3 if args.device else 30)
+    if layers < 1 or args.shots < 1 or args.seed < 0:
+        parser.error("layers and shots must be positive; seed must be nonnegative")
+    if not 0 < args.ramp < float("inf"):
+        parser.error("ramp must be finite and positive")
+    try:
+        first, last = (int(y) for y in args.years.split("-"))
+    except ValueError:
+        parser.error("years must have the form 2026-2040")
+    if first > last:
+        parser.error("the first year must not be after the last year")
+
+    workflow_started = perf_counter()
     resistances, ties = get_network(args.network)
-    layers = args.layers or (3 if args.device else 30)
-    first, last = (int(y) for y in args.years.split("-"))
     years = list(range(first, last + 1))
     pressures = {y: model.PRESSURE_PER_YEAR * (y - model.YEARS[0]) for y in years}
 
-    backend = QbraidBackend(args.device) if args.device else LocalBackend()
+    backend = QbraidBackend(args.device) if args.device else LocalBackend(seed=args.seed)
+    report_lines = []
+
+    def report(line=""):
+        print(line, flush=True)
+        report_lines.append(line)
+
+    build_started = perf_counter()
     circuits, nodes = [], None
+    hamiltonians = {}
     for y in years:
         qc, nodes = build_circuit(resistances, ties, pressures[y], layers, args.ramp)
         circuits.append(qc)
-    print(f"{args.network}: {len(nodes)} qubits, {len(years)} years, {layers} layers, "
-          f"depth {circuits[0].depth()}, {args.shots} shots each, backend {backend.name}")
+        operator, _ = build_cost_hamiltonian(resistances, ties, pressures[y])
+        hamiltonians[str(y)] = [[label, float(value.real)] for label, value in operator.to_list()]
+    build_seconds = perf_counter() - build_started
+    report(f"{args.network}: {len(nodes)} qubits, {len(years)} years, {layers} layers, "
+           f"depth {circuits[0].depth()}, {args.shots} shots each, backend {backend.name}")
+    report("Method: fixed linear-ramp quantum circuit (gate-based annealing).")
+    report("Encoding: measured 0 = digital (+1); measured 1 = paper (-1).")
+    report("Execution: qBraid remote device." if args.device
+           else f"Execution: ideal local Aer statevector simulation; seed {args.seed}.")
     if args.device:
-        print(f"  plus 1 calibration circuit (100 shots) to check bit order")
+        report("  plus 1 calibration circuit (100 shots) to check bit order")
+    report("Running quantum circuits...")
 
     start = perf_counter()
     if args.device:
@@ -200,58 +277,89 @@ def main():
         cal = backend.run([calibration_circuit(len(nodes))], 100)[0]
         top = max(cal, key=cal.get).replace(" ", "")
         qubit0_on_right = top.endswith("1")
-        print(f"  calibration top result {top!r}: qubit 0 is on the "
-              f"{'right' if qubit0_on_right else 'left'}")
+        report(f"  calibration top result {top!r}: qubit 0 is on the "
+               f"{'right' if qubit0_on_right else 'left'}")
     else:
         all_counts = backend.run(circuits, args.shots)
         qubit0_on_right = True  # Qiskit convention
     elapsed = perf_counter() - start
 
     rows, quantum_states, exact_states = [], {}, {}
-    print(f"\n{'Year':<6}{'P(exact)':>10}{'Best = exact':>14}  Digital (quantum best)")
+    reference_seconds = 0.0
+    scoring_seconds = 0.0
+    report()
+    report(f"{'Year':<6}{'Pressure':>9}{'Digital':>9}{'Exact?':>9}"
+           f"{'Energy gap':>13}  Ground-state hits / shots")
     for y, counts in zip(years, all_counts):
         A = pressures[y]
+        reference_started = perf_counter()
         exact = model.solve_min_cut(resistances, ties, A)
         e_exact = model.energy(exact, resistances, ties, A)
-        total = sum(counts.values())
-        hits, best, best_e = 0, None, None
-        for bits, c in counts.items():
-            state = to_state(bits, nodes, qubit0_on_right)
-            e = model.energy(state, resistances, ties, A)
-            if e <= e_exact + 1e-9:
-                hits += c
-            if best_e is None or e < best_e:
-                best, best_e = state, e
+        reference_seconds += perf_counter() - reference_started
+        scoring_started = perf_counter()
+        best, best_e, hits, total = analyze_counts(
+            counts, nodes, resistances, ties, A, qubit0_on_right, e_exact)
+        scoring_seconds += perf_counter() - scoring_started
         quantum_states[y], exact_states[y] = best, exact
         matches = best_e <= e_exact + 1e-9
         digital = [n if isinstance(n, str) else n[1] for n in nodes if best[n] == 1]
-        print(f"{y:<6}{hits / total:>10.3f}{'yes' if matches else 'NO':>14}  "
-              f"{', '.join(digital) or '-'}")
+        energy_gap = max(0.0, best_e - e_exact)
+        report(f"{y:<6}{A:>9.2f}{len(digital):>9}{'yes' if matches else 'NO':>9}"
+               f"{energy_gap:>13.6f}  {hits}/{total}")
         rows.append({"year": y, "pressure": round(A, 2), "p_exact": hits / total,
                      "best_matches_exact": matches, "best_energy": best_e,
                      "exact_energy": e_exact,
+                     "energy_gap": energy_gap, "digital_count": len(digital),
+                     "exact_digital_count": sum(spin == 1 for spin in exact.values()),
+                     "exact_hits": hits, "shots": total,
                      **{f"quantum_{n}": best[n] for n in nodes}})
 
     q_flips = model.flip_years(quantum_states)
     e_flips = model.flip_years(exact_states)
-    print(f"\n{'Node':<28}{'Quantum':>9}{'Exact':>8}")
+    report()
+    report(f"{'Node':<28}{'Quantum':>9}{'Exact':>8}")
     for node in nodes:
         mark = "" if q_flips.get(node) == e_flips.get(node) else "  <- differs"
-        print(f"{str(node):<28}{q_flips.get(node, '-')!s:>9}{e_flips.get(node, '-')!s:>8}{mark}")
+        report(f"{str(node):<28}{q_flips.get(node, '-')!s:>9}{e_flips.get(node, '-')!s:>8}{mark}")
     correct = sum(q_flips.get(n) == e_flips.get(n) for n in nodes)
     mean_p = sum(r["p_exact"] for r in rows) / len(rows)
-    print(f"\nFlip years correct: {correct}/{len(nodes)}.  "
-          f"Wall time incl. queue: {elapsed:.1f} s")
-    print(f"Mean P(exact) per shot: {mean_p:.3f}  vs random guessing "
-          f"1/2^{len(nodes)} = {1 / 2 ** len(nodes):.4f}  "
-          f"({mean_p * 2 ** len(nodes):.0f}x better than chance)")
+    quantum_seconds = build_seconds + elapsed + scoring_seconds
+    matching_years = sum(row["best_matches_exact"] for row in rows)
+    report(f"\nLowest energy matched: {matching_years}/{len(years)} years.")
+    report(f"Flip years correct: {correct}/{len(nodes)}.")
+    report(f"Mean ground-state sampling frequency: {mean_p:.3f}.")
+    report(f"Circuit build: {build_seconds:.3f} s; transpile/execute: {elapsed:.3f} s; "
+           f"sample scoring: {scoring_seconds:.3f} s.")
+    report(f"Quantum workflow (above stages): {quantum_seconds:.3f} s.")
+    report(f"Exact classical minimum-cut reference: {reference_seconds:.3f} s.")
 
     out = RESULTS / f"quantum_results_{args.network}_{backend.name.replace('/', '_')}.csv"
-    with out.open("w", newline="") as f:
-        writer = csv.DictWriter(f, fieldnames=list(rows[0]))
+    with out.open("w", newline="", encoding="utf-8") as f:
+        writer = csv.DictWriter(f, fieldnames=list(rows[0]), lineterminator="\n")
         writer.writeheader()
         writer.writerows(rows)
     print(f"Saved {out.name}")
+    summary_path = out.with_suffix(".txt")
+    summary_path.write_text("\n".join(report_lines) + "\n", encoding="utf-8", newline="\n")
+    metadata = {
+        "network": args.network, "backend": backend.name,
+        "execution": "remote device" if args.device else "ideal classical simulation of quantum circuits",
+        "nodes": len(nodes), "ties": len(ties), "layers": layers,
+        "shots_per_year": args.shots, "seed": args.seed, "ramp": args.ramp,
+        "method": "fixed linear-ramp QAOA-style circuit; no variational angle optimization",
+        "encoding": {"0": "digital (+1)", "1": "paper (-1)"},
+        "input_nodes": [{"node": str(node), "resistance": r} for node, r in resistances.items()],
+        "input_ties": [{"from": str(a), "to": str(b), "strength": j} for a, b, j in ties],
+        "hamiltonians": hamiltonians,
+        "energy_matching_years": matching_years, "years": years,
+        "flip_years_matching": correct, "mean_ground_state_frequency": mean_p,
+        "timing_seconds": {"circuit_build": build_seconds, "transpile_execute": elapsed,
+                           "sample_scoring": scoring_seconds, "quantum_workflow": quantum_seconds,
+                           "classical_min_cut_reference": reference_seconds},
+    }
+    out.with_suffix(".json").write_text(json.dumps(metadata, indent=2) + "\n",
+                                       encoding="utf-8", newline="\n")
+    print(f"Saved {summary_path.name} and {out.with_suffix('.json').name}")
 
 
 if __name__ == "__main__":

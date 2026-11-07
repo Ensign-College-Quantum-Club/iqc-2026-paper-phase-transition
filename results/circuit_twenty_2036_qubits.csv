@@ -1,0 +1,21 @@
+qubit_index,industry,bit_0,bit_1
+0,Technology,Digital,Paper
+1,Media,Digital,Paper
+2,Telecom,Digital,Paper
+3,Retail,Digital,Paper
+4,Hospitality,Digital,Paper
+5,Logistics,Digital,Paper
+6,Banking,Digital,Paper
+7,Accounting,Digital,Paper
+8,Manufacturing,Digital,Paper
+9,Insurance,Digital,Paper
+10,Energy,Digital,Paper
+11,Pharma,Digital,Paper
+12,Education,Digital,Paper
+13,Nonprofit,Digital,Paper
+14,Real Estate,Digital,Paper
+15,Construction,Digital,Paper
+16,Agriculture,Digital,Paper
+17,Healthcare,Digital,Paper
+18,Government,Digital,Paper
+19,Legal,Digital,Paper
