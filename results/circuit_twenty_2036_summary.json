@@ -1,0 +1,26 @@
+{
+  "network": "twenty",
+  "year": 2036,
+  "pressure": 0.7000000000000001,
+  "qubits": 20,
+  "layers": 50,
+  "expanded_layer": 25,
+  "shots": 1000,
+  "seed": 1,
+  "backend": "aer_simulator",
+  "depth": 1002,
+  "gate_counts": {
+    "cx": 2400,
+    "rz": 2200,
+    "rx": 1000,
+    "h": 20,
+    "measure": 20
+  },
+  "ground_state_hits": 348,
+  "best_energy": -5.550000000000001,
+  "exact_energy": -5.550000000000001,
+  "digital_count": 20,
+  "transpile_and_simulate_seconds": 2.3927935999818146,
+  "overview_expands_to_original": true,
+  "measurement_note": "A separate single-year experiment; seeded counts can differ from a multi-year batch."
+}

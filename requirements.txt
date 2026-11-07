@@ -5,3 +5,4 @@ qiskit-aer
 qbraid
 dwave-neal
 matplotlib
+pylatexenc
