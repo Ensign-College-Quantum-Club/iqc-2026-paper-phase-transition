@@ -1,6 +1,6 @@
 """Check every paper/digital combination for Insurance and Healthcare.
 
-Run with: python two_industries.py
+Run with: python src/two_industries.py
 """
 
 from itertools import product

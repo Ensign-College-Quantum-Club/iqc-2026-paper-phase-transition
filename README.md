@@ -4,30 +4,48 @@ This project applies the Ising-model challenge from the **IQC 2026 Paper Phase T
 
 The results below are outputs of this specified model. They are not measured adoption rates or a forecast validated against Utah company behavior.
 
-## Project files
+## Repository layout
 
-- [`utah_top10_industry_nodes.csv`](utah_top10_industry_nodes.csv) — five Utah industry nodes, representative employers, DWS industry categories and employment ranges, and resistance values.
-- [`utah_industry_connections.csv`](utah_industry_connections.csv) — the two modeled ties, README strengths and coefficients, and Utah evidence for the relationships.
-- [`twenty_industries_over_time.py`](twenty_industries_over_time.py) — solves every year from CSV inputs. By default it runs the original 20-industry example; `--utah` selects the five-industry Utah model.
-- [`utah_industries_results.csv`](utah_industries_results.csv) — generated yearly states and minimum energies for the five Utah industries, grouping ten representative employers.
-- [`twenty_industry_nodes.csv`](twenty_industry_nodes.csv) and [`twenty_industry_connections.csv`](twenty_industry_connections.csv) — the original challenge's 20 suggested industries and 24 ties, recovered from the original example.
-- [`twenty_industries_results.csv`](twenty_industries_results.csv) — generated results for the original 20-industry example.
-- [`twenty_industries_summary.txt`](twenty_industries_summary.txt) — the terminal's yearly table and first digital year for each industry, saved as plain text.
-
-Run the Utah classical baseline described below from this folder:
-
-```bash
-python -m pip install -r requirements.txt
-python twenty_industries_over_time.py --utah
+```
+data/       model inputs
+src/        solvers and scripts
+results/    solver outputs (CSV) and charts
+sources/    PDF copies of the sources cited below
 ```
 
-To run the original 20-industry example instead:
+**Data**
+
+- [`data/utah_top10_industry_nodes.csv`](data/utah_top10_industry_nodes.csv): five Utah industry nodes, representative employers, DWS industry categories and employment ranges, and resistance values.
+- [`data/utah_industry_connections.csv`](data/utah_industry_connections.csv): the two modeled ties, README strengths and coefficients, and Utah evidence for the relationships.
+- [`data/twenty_industry_nodes.csv`](data/twenty_industry_nodes.csv) and [`data/twenty_industry_connections.csv`](data/twenty_industry_connections.csv): the original challenge's 20 suggested industries and 24 ties.
+
+**Scripts**
+
+| Script | What it does | Output |
+|---|---|---|
+| [`src/two_industries.py`](src/two_industries.py) | Insurance and Healthcare: every paper/digital combination | printed |
+| [`src/two_industries_over_time.py`](src/two_industries_over_time.py) | Insurance and Healthcare, solved for each year 2026 to 2040 | printed |
+| [`src/twenty_industries_over_time.py`](src/twenty_industries_over_time.py) | Exact flip years from the 20-industry CSVs; `--utah` selects the five-industry Utah CSVs | Per-model results CSV and text summary in `results/` |
+| [`src/scaling_comparison.py`](src/scaling_comparison.py) | Brute force vs minimum cut vs simulated annealing, 5 to 1,920 nodes | `results/scaling_results.csv`, `results/scaling.png` |
+| [`src/quantum_qaoa.py`](src/quantum_qaoa.py) | Quantum tipping-point map (linear-ramp QAOA) on the Aer simulator or qBraid hardware | `results/quantum_results_<network>_<backend>.csv` |
+
+The classical runner prints the number of digital industries each year and saves the same table and first digital year for each industry:
+
+- Original 20-industry model: [`results/twenty_industries_results.csv`](results/twenty_industries_results.csv) and [`results/twenty_industries_summary.txt`](results/twenty_industries_summary.txt).
+- Five-industry Utah model: [`results/utah_industries_results.csv`](results/utah_industries_results.csv) and `results/utah_industries_summary.txt` (generated when run).
+
+**Run**
 
 ```bash
-python twenty_industries_over_time.py
+pip install -r requirements.txt
+python src/twenty_industries_over_time.py
+python src/twenty_industries_over_time.py --utah
+python src/scaling_comparison.py
+python src/quantum_qaoa.py                    # simulator, Utah network
+python src/quantum_qaoa.py --list-devices     # qBraid devices
 ```
 
-The terminal shows the number of industries that are digital each year. The script finds its input CSVs relative to its own location. Each model writes its own results CSV and text summary, so running one does not overwrite the other's results.
+Input paths are relative to the repository, so scripts can be launched from another working directory. Each classical model writes its own output files.
 
 ## Data and modeling choices
 
@@ -115,7 +133,7 @@ In this model, Retail and Manufacturing cross their thresholds first because the
 ## Sources
 
 1. **Challenge model and suggested values:** [The Paper Phase Transition — IQC 2026 README](https://github.com/PrinterLogic/iqc-2026-paper-phase-transition). Source for the Ising energy expression, suggested base resistances, tie strengths, tie scaling, AI-pressure schedule, and solver sign convention.
-2. **Utah employers and industry categories:** [Utah Department of Workforce Services — Major Employers by County](https://jobs.utah.gov/wi/data/library/firm/majoremployers.html). Used to identify representative Utah employers and their reported industry/employment categories.
-3. **Healthcare–Government evidence:** [Utah Medicaid Spending Statewide report (PDF)](https://le.utah.gov/interim/2026/pdf/00000583.pdf), especially PDF pages 1 and 3. Supports the state Medicaid/provider relationship; it does not set the tie's numeric weight.
-4. **Government–Education evidence:** [Utah FY2026 State Budget, Table 3](https://le.utah.gov/CobiServlet/cobi/BudgetRD?key=stateBudget), printed page 1-14. Lists Education and Higher Education appropriations; it does not set the tie's numeric weight.
+2. **Utah employers and industry categories:** [Utah Department of Workforce Services — Major Employers by County](https://jobs.utah.gov/wi/data/library/firm/majoremployers.html). Used to identify representative Utah employers and their reported industry/employment categories ([local copy](sources/largest-employers.pdf)).
+3. **Healthcare–Government evidence:** [Utah Medicaid Spending Statewide report (PDF)](https://le.utah.gov/interim/2026/pdf/00000583.pdf) ([local copy](sources/healthcare-government.pdf)), especially PDF pages 1 and 3. Supports the state Medicaid/provider relationship; it does not set the tie's numeric weight.
+4. **Government–Education evidence:** [Utah FY2026 State Budget, Table 3](https://le.utah.gov/CobiServlet/cobi/BudgetRD?key=stateBudget) ([local copy](sources/government-education.pdf)), printed page 1-14. Lists Education and Higher Education appropriations; it does not set the tie's numeric weight.
 

@@ -1,6 +1,6 @@
 """Solve the same two-industry model once per year, from 2026 to 2040.
 
-Run with: python two_industries_over_time.py
+Run with: python src/two_industries_over_time.py
 """
 
 from itertools import product

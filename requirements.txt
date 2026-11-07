@@ -1,1 +1,7 @@
-numpy
+numpy<2.5  # numba (used by qBraid/Braket) breaks on 2.5
+networkx
+qiskit
+qiskit-aer
+qbraid
+dwave-neal
+matplotlib

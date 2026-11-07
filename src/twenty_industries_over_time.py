@@ -4,7 +4,7 @@ This classical solver checks every arrangement using NumPy. It is intended
 for this small learning example; enumeration grows exponentially with nodes.
 The number of industries and their resistances and ties come from the CSVs.
 
-Run with: python twenty_industries_over_time.py
+Run with: python src/twenty_industries_over_time.py
 For the five-industry Utah model, add: --utah
 """
 
@@ -16,7 +16,9 @@ from time import perf_counter
 import numpy as np
 
 
-data_directory = Path(__file__).resolve().parent
+repository_directory = Path(__file__).resolve().parents[1]
+data_directory = repository_directory / "data"
+results_directory = repository_directory / "results"
 nodes_path = data_directory / "twenty_industry_nodes.csv"
 connections_path = data_directory / "twenty_industry_connections.csv"
 start_year = 2026
@@ -156,8 +158,9 @@ def main():
         print_summary("Flip years require all lowest-energy arrangements to agree on digital.")
     print(f"\nPreparation and yearly solving: {elapsed:.3f} seconds (includes console output).")
 
+    results_directory.mkdir(exist_ok=True)
     results_filename = "utah_industries_results.csv" if arguments.utah else "twenty_industries_results.csv"
-    output_path = data_directory / results_filename
+    output_path = results_directory / results_filename
     with output_path.open("w", newline="", encoding="utf-8") as output:
         writer = csv.DictWriter(output, fieldnames=list(rows[0]), lineterminator="\n")
         writer.writeheader()
@@ -165,7 +168,7 @@ def main():
     print(f"Yearly states saved to: {output_path}")
 
     summary_filename = "utah_industries_summary.txt" if arguments.utah else "twenty_industries_summary.txt"
-    summary_path = data_directory / summary_filename
+    summary_path = results_directory / summary_filename
     summary_path.write_text("\n".join(summary_lines) + "\n", encoding="utf-8", newline="\n")
     print(f"Yearly table and flip years saved to: {summary_path}")
 
